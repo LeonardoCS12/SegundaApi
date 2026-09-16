@@ -13,6 +13,7 @@ Este proyecto es la continuación de la práctica *PrimeraApi* (gestión de Usua
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Arquitectura](#arquitectura)
 - [Requisitos previos](#requisitos-previos)
+- [Base de datos con Docker](#base-de-datos-con-docker)
 - [Configuración](#configuración)
 - [Migraciones y base de datos](#migraciones-y-base-de-datos)
 - [Ejecución](#ejecución)
@@ -37,12 +38,14 @@ Desarrollar una API REST que permita gestionar **usuarios** y **productos** medi
 - **BCrypt.Net-Next** (cifrado de contraseñas)
 - **Swashbuckle / Swagger** (documentación interactiva)
 - **DotNetEnv** (variables de entorno desde `.env`)
+- **Docker / Docker Compose** (contenedor de PostgreSQL para desarrollo)
 
 ## Estructura del proyecto
 
 ```
 SegundaApi/
 ├── Program.cs                     # Configuración y arranque de la app
+├── docker-compose.yml             # Contenedor de PostgreSQL para desarrollo
 ├── Common/                        # Compartido entre Users y Products
 │   ├── Exceptions/ApiResponse.cs         # Formato estándar de respuesta
 │   └── Resources/MessageDictionary.cs    # Diccionario centralizado de mensajes
@@ -91,13 +94,58 @@ Usuarios y Productos son módulos de negocio **totalmente independientes**: no e
 ## Requisitos previos
 
 - SDK de [.NET 10](https://dotnet.microsoft.com/)
-- [PostgreSQL](https://www.postgresql.org/) instalado localmente, **o** Docker + Docker Compose
+- [Docker](https://www.docker.com/) y [Docker Compose](https://docs.docker.com/compose/) (recomendado), **o** PostgreSQL instalado localmente
 - Herramientas de EF Core:
   ```bash
   dotnet add package Microsoft.EntityFrameworkCore.Tools
   dotnet add package Microsoft.EntityFrameworkCore.Design
   dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
   ```
+
+## Base de datos con Docker
+
+El proyecto incluye un `docker-compose.yml` que levanta una instancia de **PostgreSQL 15** lista para usarse en desarrollo, sin necesidad de instalar PostgreSQL localmente.
+
+```yaml
+services:
+  postgres:
+    image: postgres:15
+    container_name: segunda_api_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_segunda:/var/lib/postgresql/data
+
+volumes:
+  postgres_data_segunda:
+```
+
+Las variables `${DB_NAME}`, `${DB_USER}` y `${DB_PASSWORD}` se toman del archivo `.env` (ver sección [Configuración](#configuración)). Antes de levantar el contenedor asegúrate de tener ese `.env` creado en la raíz del proyecto.
+
+Para levantar el contenedor:
+
+```bash
+docker compose up -d
+```
+
+Para verificar que está corriendo:
+
+```bash
+docker ps
+```
+
+Para detenerlo:
+
+```bash
+docker compose down
+```
+
+> El volumen `postgres_data_segunda` persiste los datos aunque el contenedor se detenga o reinicie. Si necesitas borrar todo y empezar de cero: `docker compose down -v`.
 
 ## Configuración
 
@@ -115,11 +163,11 @@ ConnectionStrings__DefaultConnectionUsers="Host=localhost;Port=5432;Database=api
 ConnectionStrings__DefaultConnectionProducts="Host=localhost;Port=5432;Database=apitienda_dbdos;Username=tu_usuario;Password=tu_contraseña"
 ```
 
-> ⚠️ El `.env` contiene credenciales y está incluido en `.gitignore`. Nunca debe subirse al repositorio.
+> ⚠️ El `.env` contiene credenciales y está incluido en `.gitignore`. Nunca debe subirse al repositorio. Estas mismas variables (`DB_USER`, `DB_PASSWORD`, `DB_NAME`) son las que utiliza `docker-compose.yml` para inicializar el contenedor de PostgreSQL.
 
 ## Migraciones y base de datos
 
-Con la base de datos levantada (PostgreSQL local o vía Docker), aplica las migraciones para cada contexto:
+Con la base de datos levantada (vía Docker Compose o PostgreSQL local), aplica las migraciones para cada contexto:
 
 ```bash
 # Migraciones de Usuarios
