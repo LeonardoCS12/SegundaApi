@@ -37,6 +37,12 @@ public DbSet <Usuario > Users { get; set; }
 public DbSet <PasswordResetToken > passwordresettoken { get; set; }
 
 /// <summary >
+/// Define una propiedad DbSet para acceder a la tabla de TokenBlacklist en
+/// la base de datos.
+/// </summary >
+public DbSet <token_blacklist > token_blacklist { get; set; }
+
+/// <summary >
 /// Configura la cadena de conexión para la base de datos PostgreSQL.
 /// </summary >
 /// <param name="optionsBuilder">El constructor de opciones para configurar

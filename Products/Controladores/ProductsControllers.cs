@@ -3,9 +3,11 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using productos.Models;
+using Microsoft.AspNetCore.Authorization;
 
 
 [Route("api/")]
+[Authorize(AuthenticationSchemes = "Bearer")]
 [ApiController]
 public class productController : ControllerBase
 {

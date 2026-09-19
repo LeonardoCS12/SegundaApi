@@ -177,6 +177,10 @@ dotnet ef database update --context DataContext
 # Migraciones de Productos
 dotnet ef migrations add InitialCreateProductos --context DataContextProduct --output-dir Migrations/DataContextProductMigrations
 dotnet ef database update --context DataContextProduct
+
+# Migración de la tabla token_blacklist (autenticación JWT)
+dotnet ef migrations add AddTokenBlacklist --context DataContext --output-dir Migrations
+dotnet ef database update --context DataContext
 ```
 
 ## Ejecución
@@ -206,6 +210,19 @@ https://localhost:<puerto>/swagger/index.html
 ```
 
 Swagger solo está disponible en el entorno de **Development**.
+
+## Autenticación (JWT)
+
+La API protege el módulo de **Productos** mediante autenticación con **JSON Web Tokens**. El flujo es:
+
+1. `POST /auth/login` con `email` y `password` → devuelve un `access token` (corta duración, 15 min) y un `refresh token` (larga duración, 7 días).
+2. En Swagger, botón **Authorize** → pegar el `access token` → todos los endpoints con candado quedan habilitados.
+3. Cuando el `access token` expira, `POST /auth/refresh` con el `refresh token` genera un nuevo par de tokens (y revoca el `refresh token` anterior guardándolo en la tabla `token_blacklist`).
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| POST | `/auth/login` | Inicia sesión y genera access + refresh token |
+| POST | `/auth/refresh` | Renueva los tokens a partir de un refresh token válido |
 
 ## Endpoints
 

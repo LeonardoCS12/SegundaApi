@@ -2,6 +2,10 @@ using apitienda.Data;
 using Microsoft.EntityFrameworkCore;
 using DotNetEnv;
 using productos.Data;
+using Microsoft.OpenApi;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 
 
@@ -53,13 +57,66 @@ builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ProductMapper>();
 builder.Services.AddScoped<CreateProductMapper>();
 
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IJwtService, JwtService>();
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
+        )
+    };
+});
+
 
 /// <summary>
 /// Agrega los servicios necesarios para habilitar los controladores y el modelo MVC.
 /// </summary>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer(); // Habilita la exploración de los puntos finales para que Swagger pueda generar documentación
-builder.Services.AddSwaggerGen(); // Agrega el servicio de Swagger para generar documentación interactiva de la API
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Mi API",
+        Version = "v1"
+    });
+
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Ingresa el token JWT así: Bearer token"
+    });
+
+   options.AddSecurityRequirement(document =>
+{
+    var requirement = new OpenApiSecurityRequirement
+    {
+        {
+                new OpenApiSecuritySchemeReference("Bearer", document),
+                new List<string>()
+        }
+    };
+    return requirement;
+  });
+});
 
 var app = builder.Build();
 
@@ -77,6 +134,12 @@ if (app.Environment.IsDevelopment())
 /// Habilita la redirección HTTPS.
 /// </summary>
 //app.UseHttpsRedirection();
+
+/// <summary>
+/// Habilita la autenticación y autorización.
+/// </summary>
+app.UseAuthentication();
+app.UseAuthorization();
 
 /// <summary>
 /// Mapea los controladores.

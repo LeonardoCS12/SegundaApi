@@ -95,4 +95,12 @@ public interface IUsuarioService
     /// <param name="model">El modelo que contiene la nueva contraseña y el token de restablecimiento.</param>
     /// <returns>Una acción que indica el resultado de la operación.</returns>
     Task<IActionResult> ResetPasswordAsync(string Token, string NewPassword);
+
+    /// <summary>
+    /// Valida las credenciales del usuario (email y contraseña).
+    /// </summary>
+    /// <param name="email">Correo electrónico.</param>
+    /// <param name="password">Contraseña sin hashear.</param>
+    /// <returns>El usuario si es válido; null si no.</returns>
+    Task<IActionResult> ValidateUserAsync(string email, string password);
 }

@@ -577,4 +577,43 @@ public class UsuarioService : IUsuarioService
         return new OkObjectResult(new ApiResponse<string>(200,
             MessageService.Instance.GetMessage("ResetPasswordAsyncUser200")));
     }
+
+    /// <summary>
+    /// Valida las credenciales de un usuario a partir del correo electrónico y la contraseña proporcionados.
+    /// </summary>
+    /// <param name="email">Correo electrónico del usuario.</param>
+    /// <param name="password">Contraseña en texto plano ingresada por el usuario.</param>
+    /// <returns>
+    /// Una tarea que representa el resultado de la validación. Retorna un <see cref="UnauthorizedObjectResult"/>
+    /// si las credenciales son inválidas o el usuario está inactivo,
+    /// o un <see cref="OkObjectResult"/> si las credenciales son válidas.
+    /// </returns>
+    public async Task<IActionResult> ValidateUserAsync(string email, string password)
+    {
+        var user = await _iUsuarioDAO.GetByEmailAsync(email);
+
+        if (user == null)
+        {
+            return new UnauthorizedObjectResult(new ApiResponse<string>(401, "Credenciales inválidas"));
+        }
+
+        if (!user.is_active)
+        {
+            return new UnauthorizedObjectResult(new ApiResponse<string>(401, "Usuario inactivo"));
+        }
+
+        // Si la contraseña no está hasheada, la hasheamos y guardamos
+        if (!user.password.StartsWith("$2a$") && !user.password.StartsWith("$2b$") && !user.password.StartsWith("$2y$"))
+        {
+            user.password = BCrypt.Net.BCrypt.HashPassword(user.password, 12);
+            await _iUsuarioDAO.UpdateAsync(user);
+        }
+
+        if (!BCrypt.Net.BCrypt.Verify(password, user.password))
+        {
+            return new UnauthorizedObjectResult(new ApiResponse<string>(401, "Credenciales inválidas"));
+        }
+
+        return new OkObjectResult(user);
+    }
 }
