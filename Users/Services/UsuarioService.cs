@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using apitienda.Data;
+using apitienda.Models;
 
 public class UsuarioService : IUsuarioService
 {
@@ -6,19 +8,23 @@ public class UsuarioService : IUsuarioService
     private readonly UsuarioMapper _usuarioMapper;
     private readonly CreateUserMapper _createUserMapper;
     private readonly PasswordResetEmail _emailService; // Inyectar EmailService
+    private readonly DataContext _context;
+    private readonly IHttpContextAccessor _ihttpContextAccessor;
 
     /// <summary>
     /// Inicializa una nueva instancia de la clase <see cref="UsuarioService"/>.
     /// </summary>
     /// <param name="usuarioDAO">El DAO para la interacción con la base de datos.</param>
     /// <param name="usuarioMapper">El mapper para convertir entre entidades y DTOs.</param>
-    public UsuarioService(IUsuarioDAO iUsuarioDAO, UsuarioMapper usuarioMapper,
+    public UsuarioService(IHttpContextAccessor contextAccessor, DataContext context, IUsuarioDAO iUsuarioDAO, UsuarioMapper usuarioMapper,
         CreateUserMapper createUserMapper, PasswordResetEmail emailService)
     {
         _iUsuarioDAO = iUsuarioDAO;
         _usuarioMapper = usuarioMapper;
         _createUserMapper = createUserMapper;
         _emailService = emailService; // Asignar en el constructor
+        _context = context;
+        _ihttpContextAccessor = contextAccessor;
     }
 
     // 7.9.1 Servicio: obtener todos los usuarios
@@ -157,6 +163,29 @@ public class UsuarioService : IUsuarioService
 
         await _iUsuarioDAO.AddAsync(usuario);
 
+        try
+        {
+            var adminUser = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = adminUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? adminUser?.Identity?.Name
+                          ?? "SISTEMA/REGISTRO_PUBLICO",
+                Accion = "CREAR_USUARIO",
+                Tabla = "Users",
+                RegistroId = usuario.id.ToString(),
+                Detalle = $"Se creó el nuevo usuario: {usuario.username} con email: {usuario.email}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar creación de usuario: {ex.Message}");
+        }
+
         var resultado = new UsuarioDTOResponceExtends(usuario.id, usuarioDTO);
         return new CreatedResult("", new ApiResponse<UsuarioDTOResponceExtends>(201,
             MessageService.Instance.GetMessage("AddAsyncUser201"), resultado));
@@ -189,6 +218,8 @@ public class UsuarioService : IUsuarioService
             return new BadRequestObjectResult(new ApiResponse<string>(400,
                 MessageService.Instance.GetMessage("UpdateAsyncUser400Active")));
         }
+
+        string usernamePrevio = usuario.username;
 
         // Verifica si el correo electrónico ya está en uso por otro usuario
         SentenciaUsuarios Crearsentencia = new SentenciaUsuarios(usuarioUpdate.email,
@@ -235,6 +266,30 @@ public class UsuarioService : IUsuarioService
         _iUsuarioDAO.Detach(usuario);
         await _iUsuarioDAO.UpdateAsync(usuario);
 
+        try
+        {
+            var editorUser = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = editorUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? editorUser?.Identity?.Name
+                          ?? "SISTEMA/AUTO_UPDATE",
+                Accion = "ACTUALIZAR_USUARIO",
+                Tabla = "Users",
+                RegistroId = id.ToString(),
+                Detalle = $"Actualización de datos para el usuario: {usernamePrevio}. " +
+                          $"Nuevo username: {usuario.username}, Rol: {usuario.role}, Activo: {usuario.is_active}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar actualización de usuario {id}: {ex.Message}");
+        }
+
         // Convierte la entidad actualizada a DTO
         var usuarioDTOResponce = _usuarioMapper.ToDTO(usuario); // Convierte la entidad actualizada a DTO
         var resultado = new UsuarioDTOResponceExtends(usuario.id, usuarioDTOResponce);
@@ -262,7 +317,35 @@ public class UsuarioService : IUsuarioService
             return new BadRequestObjectResult(new ApiResponse<string>(400,
                 MessageService.Instance.GetMessage("DeleteAsyncUser400")));
         }
+
+        string usuarioEliminado = existeusuario.username;
+        string emailEliminado = existeusuario.email;
+
         await _iUsuarioDAO.DeleteAsync(id);
+
+        try
+        {
+            var adminUser = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = adminUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? adminUser?.Identity?.Name
+                          ?? "SISTEMA/ADMIN",
+                Accion = "ELIMINAR_USUARIO",
+                Tabla = "Users",
+                RegistroId = id.ToString(),
+                Detalle = $"Se eliminó al usuario: {usuarioEliminado} (Email: {emailEliminado})",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error crítico de auditoría al eliminar usuario {id}: {ex.Message}");
+        }
+
         return new OkObjectResult(new ApiResponse<string>(200,
             MessageService.Instance.GetMessage("DeleteAsyncUser200")));
     }
@@ -290,6 +373,8 @@ public class UsuarioService : IUsuarioService
                 MessageService.Instance.GetMessage("UpdatePartialAsyncUser400")));
         }
 
+        string infoPrevia = $"Usuario: {existingUser.username} (Email: {existingUser.email})";
+
         // Actualiza parcialmente el usuario
         existingUser.first_name = usuarioDTO.first_name ?? existingUser.first_name;
         existingUser.last_name = usuarioDTO.last_name ?? existingUser.last_name;
@@ -299,6 +384,30 @@ public class UsuarioService : IUsuarioService
         await _iUsuarioDAO.UpdateAsync(existingUser); // Guarda los cambios en la base de datos
 
         var resultado = _usuarioMapper.ToDTO(existingUser); // Convierte la entidad actualizada a DTO
+
+        try
+        {
+            var editorUser = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = editorUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? editorUser?.Identity?.Name
+                          ?? "SISTEMA/AUTO_PATCH",
+                Accion = "ACTUALIZACION_PARCIAL_USUARIO",
+                Tabla = "Users",
+                RegistroId = id.ToString(),
+                Detalle = $"Actualización parcial de {infoPrevia}. Datos finales -> Nombre: {existingUser.first_name} {existingUser.last_name}, Email: {existingUser.email}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar Patch de usuario {id}: {ex.Message}");
+        }
+
         var resultadoDTO = new UsuarioDTOResponceExtends(id, resultado); // Crea un nuevo DTO de respuesta
 
         return new OkObjectResult(new ApiResponse<UsuarioDTOResponceExtends>(200,
@@ -468,6 +577,29 @@ public class UsuarioService : IUsuarioService
         // Hashear la nueva contraseña antes de guardarla
         usuario.password = BCrypt.Net.BCrypt.HashPassword(model.NewPassword, 12);
         await _iUsuarioDAO.UpdateAsync(usuario);
+
+        try
+        {
+            var currentUser = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = currentUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? currentUser?.Identity?.Name
+                          ?? "SISTEMA/AUTO_GESTION",
+                Accion = "CAMBIO_CONTRASEÑA",
+                Tabla = "Users",
+                RegistroId = id.ToString(),
+                Detalle = $"El usuario {usuario.username} cambió su contraseña exitosamente.",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar cambio de password para {id}: {ex.Message}");
+        }
 
         return new OkObjectResult(new ApiResponse<string>(200,
             MessageService.Instance.GetMessage("ChangePasswordAsyncUser200")));

@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Linq;
 using apitienda.Data;
 using apitienda.Models;
 using Microsoft.IdentityModel.Tokens;
@@ -10,6 +11,9 @@ public class JwtService : IJwtService
     private readonly IConfiguration _configuration;
     private readonly DataContext _context;
 
+    private readonly IHttpContextAccessor _ihttpContextAccessor;
+    private readonly ILogger<JwtService> _logger;
+
     public int AccessTokenExpiryMinutes =>
         int.Parse(_configuration["Jwt:AccessTokenMinutes"]!);
 
@@ -17,10 +21,12 @@ public class JwtService : IJwtService
         int.Parse(_configuration["Jwt:RefreshTokenDays"]!);
 
 
-    public JwtService(IConfiguration configuration, DataContext context)
+    public JwtService(IHttpContextAccessor contextAccessor, IConfiguration configuration, DataContext context, ILogger<JwtService> logger)
     {
         _configuration = configuration;
         _context = context;
+        _ihttpContextAccessor = contextAccessor;
+        _logger = logger;
     }
 
     // Creamos el token a partir de la llave en la palabra secreta
@@ -44,7 +50,32 @@ public class JwtService : IJwtService
         );
 
         // Convierte ese objeto complejo en el string largo lleno de puntos que todos conocemos.
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+
+        try
+        {
+            var userEmail = claims.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value ?? "Desconocido";
+            var userId = claims.FirstOrDefault(c => c.Type == JwtRegisteredClaimNames.Sub)?.Value ?? "N/A";
+
+            var log = new Auditoria
+            {
+                Usuario = userEmail,
+                Accion = "GENERACION_JWT",
+                Tabla = "Seguridad/Auth",
+                RegistroId = userId,
+                Detalle = $"Acceso concedido. El token expira el: {expires:yyyy-MM-dd HH:mm:ss} UTC.",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            _context.SaveChanges();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al registrar auditoría de token para {User}", claims.FirstOrDefault(c => c.Type == ClaimTypes.Email)?.Value);
+        }
+
+        return tokenString;
     }
 
     // Generamos el refresh token

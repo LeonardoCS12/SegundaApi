@@ -24,6 +24,8 @@ public DataContext(DbContextOptions <DataContext > options)
 {
 }
 
+public DbSet <Auditoria > Auditorias { get; set; }
+
 /// <summary >
 /// Define una propiedad DbSet para acceder a la tabla de usuarios en la
 /// base de datos.

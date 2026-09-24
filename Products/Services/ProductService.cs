@@ -6,18 +6,24 @@ using productos.Methods;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Authentication.BearerToken;
+using apitienda.Data;
+using apitienda.Models;
 
 public class ProductService : IProductService
 {
     private readonly IProductDAO _iProductDAO;
     private readonly ProductMapper _productMapper;
     private readonly CreateProductMapper _createProductoMapper;
+    private readonly DataContext _context;
+    private readonly IHttpContextAccessor _ihttpContextAccessor;
 
-    public ProductService(IProductDAO iProductDAO, ProductMapper productMapper, CreateProductMapper createProductoMapper)
+    public ProductService(IHttpContextAccessor contextAccessor, DataContext context, IProductDAO iProductDAO, ProductMapper productMapper, CreateProductMapper createProductoMapper)
     {
         _iProductDAO = iProductDAO;
         _productMapper = productMapper;
         _createProductoMapper = createProductoMapper;
+        _context = context;
+        _ihttpContextAccessor = contextAccessor;
     }
 
     /// <summary>
@@ -99,6 +105,23 @@ public class ProductService : IProductService
             price = result.price,
         };
 
+        var user = _ihttpContextAccessor.HttpContext?.User;
+        var log = new Auditoria
+        {
+            Usuario = user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? user?.FindFirst("id")?.Value
+                ?? user?.Identity?.Name
+                ?? "ID_No_Encontrado",
+            Accion = "CREAR_PRODUCTO",
+            Tabla = "Products",
+            RegistroId = result.id.ToString(),
+            Detalle = $"Se registró el producto: {result.name}",
+            Fecha = DateTime.UtcNow
+        };
+
+        _context.Auditorias.Add(log);
+        await _context.SaveChangesAsync();
+
         return new OkObjectResult(new ApiResponse<ProductoResponseDTO>(200,MessageService.Instance.GetMessage("Productoscreate200"),respuestaDTO));
     }
 
@@ -134,6 +157,24 @@ public class ProductService : IProductService
         // Guardar el producto actualizado
         await _iProductDAO.UpdateAsync(product);
 
+        var user = _ihttpContextAccessor.HttpContext?.User;
+
+        var log = new Auditoria
+        {
+            Usuario = user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                      ?? user?.FindFirst("id")?.Value
+                      ?? user?.Identity?.Name
+                      ?? "Sistema/Admin",
+            Accion = "ACTUALIZAR_PRODUCTO",
+            Tabla = "Products",
+            RegistroId = product.id.ToString(),
+            Detalle = $"Se actualizó el producto: {product.name}. Precio final: {product.price}. Estado: {product.status}",
+            Fecha = DateTime.UtcNow
+        };
+
+        _context.Auditorias.Add(log);
+        await _context.SaveChangesAsync();
+
         return new OkObjectResult(new ApiResponse<string>(200,MessageService.Instance.GetMessage("ProductUpdate200"))); // Producto actualizado correctamente
     }
 
@@ -150,6 +191,8 @@ public class ProductService : IProductService
         {
             return new NotFoundObjectResult(new ApiResponse<string>(404, MessageService.Instance.GetMessage("ProductPartialUpdate404")));
         }
+
+        string nombreAnterior = product.name;
 
         if(product.is_deleted)
         {
@@ -175,6 +218,30 @@ public class ProductService : IProductService
         // Guardar los cambios en la base de datos
         await _iProductDAO.UpdateAsync(product);
 
+        try
+        {
+            var user = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? user?.FindFirst("id")?.Value
+                          ?? user?.Identity?.Name
+                          ?? "ID_No_Encontrado",
+                Accion = "ACTUALIZACION_PARCIAL",
+                Tabla = "Products",
+                RegistroId = id.ToString(),
+                Detalle = $"Cambio parcial en producto: {nombreAnterior}. Nuevo nombre: {product.name}, Precio: {product.price}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al registrar auditoría en Patch: {ex.Message}");
+        }
+
         return new OkObjectResult(new ApiResponse<string>(200, MessageService.Instance.GetMessage("ProductPartialUpdate200")));
     }
 
@@ -194,10 +261,37 @@ public class ProductService : IProductService
             return new BadRequestObjectResult(new ApiResponse<string>(400, MessageService.Instance.GetMessage("DeleteProduct400")));
         }
 
+        string nombreProducto = product.name;
+
         product.is_deleted = true;
         product.deleted_at = DateTimeOffset.UtcNow;
 
         await _iProductDAO.UpdateAsync(product);
+
+        try
+        {
+            var user = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? user?.FindFirst("id")?.Value
+                          ?? user?.Identity?.Name
+                          ?? "ID_No_Encontrado",
+                Accion = "ELIMINAR_LOGICO",
+                Tabla = "Products",
+                RegistroId = id.ToString(),
+                Detalle = $"Se realizó el eliminado lógico del producto: {nombreProducto}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar eliminación de {id}: {ex.Message}");
+        }
+
         return new OkObjectResult(new ApiResponse<string>(200,MessageService.Instance.GetMessage("DeleteProduct200")));
     }
 
@@ -271,9 +365,35 @@ public class ProductService : IProductService
             return new NotFoundObjectResult(new ApiResponse<string>(404, MessageService.Instance.GetMessage("UpdateImage404")));
         }
 
+        string oldImage = existingProduct.image_lick ?? "Ninguna";
+
         existingProduct.image_lick = updateImage.image_link;
 
         await _iProductDAO.UpdateAsync(existingProduct);
+
+        try
+        {
+            var user = _ihttpContextAccessor.HttpContext?.User;
+            var log = new Auditoria
+            {
+                Usuario = user?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                          ?? user?.FindFirst("id")?.Value
+                          ?? user?.Identity?.Name
+                          ?? "ID_No_Encontrado",
+                Accion = "ACTUALIZAR_IMAGEN",
+                Tabla = "Products",
+                RegistroId = id.ToString(),
+                Detalle = $"Se cambió la imagen del producto '{existingProduct.name}'. URL anterior: {oldImage} -> Nueva URL: {existingProduct.image_lick}",
+                Fecha = DateTime.UtcNow
+            };
+
+            _context.Auditorias.Add(log);
+            await _context.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error al auditar actualización de imagen: {ex.Message}");
+        }
 
         return new OkObjectResult(new ApiResponse<string>(200,MessageService.Instance.GetMessage("UpdateImage200")));
     }
