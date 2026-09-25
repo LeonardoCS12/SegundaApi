@@ -2,7 +2,7 @@
 
 API REST construida con **.NET 10** y **C#**, que implementa dos módulos independientes —**Usuarios** y **Productos**— siguiendo una arquitectura en capas (Modelo → DTO → DAO → Mapper → Service → Controller) sobre **PostgreSQL** con **Entity Framework Core** y **Dapper**.
 
-Este proyecto es la continuación de la práctica *PrimeraApi* (gestión de Usuarios), a la que se le agrega un segundo módulo de negocio completo: **Productos**.
+el proyecto incorpora autenticación con **JWT**, **logging estructurado** con Serilog, un módulo de **auditoría** (en desarrollo) y un proyecto de **pruebas unitarias** con xUnit.
 
 ---
 
@@ -13,14 +13,19 @@ Este proyecto es la continuación de la práctica *PrimeraApi* (gestión de Usua
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Arquitectura](#arquitectura)
 - [Requisitos previos](#requisitos-previos)
-- [Base de datos con Docker](#base-de-datos-con-docker)
+- [Docker](#docker)
 - [Configuración](#configuración)
+  - [CORS (orígenes permitidos)](#cors-orígenes-permitidos)
 - [Migraciones y base de datos](#migraciones-y-base-de-datos)
 - [Ejecución](#ejecución)
 - [Documentación con Swagger](#documentación-con-swagger)
+- [Autenticación (JWT)](#autenticación-jwt)
+- [Logging](#logging)
+- [Auditoría](#auditoría)
 - [Endpoints](#endpoints)
   - [Usuarios](#usuarios)
   - [Productos](#productos)
+- [Pruebas](#pruebas)
 
 ---
 
@@ -36,20 +41,33 @@ Desarrollar una API REST que permita gestionar **usuarios** y **productos** medi
 - **Entity Framework Core** (ORM) + **Npgsql**
 - **Dapper** (consultas SQL dinámicas para filtros y paginación)
 - **BCrypt.Net-Next** (cifrado de contraseñas)
+- **JWT** (`Microsoft.AspNetCore.Authentication.JwtBearer` + `System.IdentityModel.Tokens.Jwt`) — autenticación del módulo de Productos
+- **Serilog** (consola + archivo JSON con rotación diaria) — logging estructurado
 - **Swashbuckle / Swagger** (documentación interactiva)
 - **DotNetEnv** (variables de entorno desde `.env`)
-- **Docker / Docker Compose** (contenedor de PostgreSQL para desarrollo)
+- **xUnit / Moq / EF Core InMemory** (pruebas unitarias)
+- **Docker / Docker Compose** (contenedores de PostgreSQL y de la API)
 
 ## Estructura del proyecto
 
 ```
 SegundaApi/
 ├── Program.cs                     # Configuración y arranque de la app
-├── docker-compose.yml             # Contenedor de PostgreSQL para desarrollo
+├── Dockerfile                     # Build multi-stage de la API (SDK → runtime)
+├── docker-compose.yml             # Contenedores de PostgreSQL y de la API
+├── .env.example                   # Plantilla de variables de entorno
 ├── Common/                        # Compartido entre Users y Products
 │   ├── Exceptions/ApiResponse.cs         # Formato estándar de respuesta
 │   └── Resources/MessageDictionary.cs    # Diccionario centralizado de mensajes
 ├── Migrations/                    # Migraciones de EF Core (Usuarios y Productos)
+├── Token/                         # Módulo de autenticación JWT
+│   ├── AuthService/               # AuthController + AuthService (login/refresh)
+│   ├── DTOs/                      # LoginRequestDTO, RefreshRequestDTO, TokenResponse
+│   ├── Models/                    # token_blacklist
+│   └── Service/                   # JwtService (emisión/validación de tokens)
+├── logsauditoria/                 # Módulo de auditoría (en desarrollo, ver sección Auditoría)
+│   ├── Models/                    # Auditoria
+│   └── Services/                  # AuditoriaService
 ├── Users/                         # Módulo de Usuarios
 │   ├── Controllers/
 │   ├── DAO/
@@ -60,16 +78,17 @@ SegundaApi/
 │   ├── Methods/
 │   ├── Models/
 │   └── Services/
-└── Products/                      # Módulo de Productos
-    ├── Controladores/
-    ├── DAO/
-    ├── DATA/
-    ├── DTO/
-    ├── Exception/
-    ├── Mappers/
-    ├── Metodos/
-    ├── Models/
-    └── Services/
+├── Products/                      # Módulo de Productos
+│   ├── Controladores/
+│   ├── DAO/
+│   ├── DATA/
+│   ├── DTO/
+│   ├── Exception/
+│   ├── Mappers/
+│   ├── Metodos/
+│   ├── Models/
+│   └── Services/
+└── ApiTienda.Tests/                # Pruebas unitarias (xUnit + Moq + EF Core InMemory)
 ```
 
 ## Arquitectura
@@ -91,6 +110,8 @@ Controller → Service → DAO → DataContext (EF Core) → PostgreSQL
 
 Usuarios y Productos son módulos de negocio **totalmente independientes**: no existe relación ni comunicación entre sus Services o DAOs.
 
+Los módulos **Token** (autenticación) y **logsauditoria** (auditoría) son transversales: no manejan una entidad de negocio propia, así que no siguen el mismo patrón de capas completo (por ejemplo, `logsauditoria` solo tiene Model + Service, sin Controller ni DAO propios).
+
 ## Requisitos previos
 
 - SDK de [.NET 10](https://dotnet.microsoft.com/)
@@ -102,68 +123,114 @@ Usuarios y Productos son módulos de negocio **totalmente independientes**: no e
   dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL
   ```
 
-## Base de datos con Docker
+## Docker
 
-El proyecto incluye un `docker-compose.yml` que levanta una instancia de **PostgreSQL 15** lista para usarse en desarrollo, sin necesidad de instalar PostgreSQL localmente.
+El proyecto incluye un `docker-compose.yml` con **dos servicios**:
 
 ```yaml
 services:
-  postgres:
+  db:
     image: postgres:15
-    container_name: segunda_api_postgres
+    container_name: postgres_dbusers
     restart: always
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432"
+      - "${DB_PORT}:5432"
     volumes:
-      - postgres_data_segunda:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+
+  web_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "5001:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    depends_on:
+      - db
+    env_file:
+      - .env
 
 volumes:
-  postgres_data_segunda:
+  postgres_data:
 ```
 
-Las variables `${DB_NAME}`, `${DB_USER}` y `${DB_PASSWORD}` se toman del archivo `.env` (ver sección [Configuración](#configuración)). Antes de levantar el contenedor asegúrate de tener ese `.env` creado en la raíz del proyecto.
+- **`db`**: PostgreSQL 15. Internamente siempre escucha en el puerto `5432`; hacia afuera se publica en el puerto que definas en `DB_PORT` (ver [Configuración](#configuración)).
+- **`web_api`**: compila y corre la API a partir del `Dockerfile` (build multi-stage: `sdk:10.0` para compilar, `aspnet:10.0` para ejecutar). Queda disponible en `http://localhost:5001`, con `ASPNETCORE_ENVIRONMENT=Development` para que Swagger siga habilitado.
+- Ambos servicios leen sus variables desde el mismo archivo `.env` (`env_file`).
 
-Para levantar el contenedor:
+Antes de levantar los contenedores asegúrate de tener el `.env` creado en la raíz del proyecto (ver [Configuración](#configuración)).
+
+Para levantar todo (Postgres + API):
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-Para verificar que está corriendo:
+Para levantar solo la base de datos y correr la API localmente con `dotnet run`:
+
+```bash
+docker compose up -d db
+```
+
+Para verificar que están corriendo:
 
 ```bash
 docker ps
 ```
 
-Para detenerlo:
+Para detener los contenedores:
 
 ```bash
 docker compose down
 ```
 
-> El volumen `postgres_data_segunda` persiste los datos aunque el contenedor se detenga o reinicie. Si necesitas borrar todo y empezar de cero: `docker compose down -v`.
+> El volumen `postgres_data` persiste los datos aunque los contenedores se detengan o reinicien. Si necesitas borrar todo y empezar de cero: `docker compose down -v`.
 
 ## Configuración
 
-Crea un archivo `.env` en la raíz del proyecto (no se sube al repositorio) con el siguiente contenido:
+Crea un archivo `.env` en la raíz del proyecto (no se sube al repositorio) con el siguiente contenido. Puedes basarte en `.env.example`:
 
 ```env
-# Datos de la base de datos
+# --- CONFIGURACIÓN DE BASE DE DATOS (DOCKER) ---
+# Estos valores los usa docker-compose.yml para crear el contenedor de PostgreSQL
 DB_USER=tu_usuario
 DB_PASSWORD=tu_contraseña
-DB_NAME=apitienda_dbdos
-DB_PORT=5432
+DB_NAME=apitienda_db
+DB_PORT=5433
+# ^ puerto publicado en el HOST; dentro del contenedor Postgres siempre escucha en 5432
 
-# Cadenas de conexión para .NET
-ConnectionStrings__DefaultConnectionUsers="Host=localhost;Port=5432;Database=apitienda_dbdos;Username=tu_usuario;Password=tu_contraseña"
-ConnectionStrings__DefaultConnectionProducts="Host=localhost;Port=5432;Database=apitienda_dbdos;Username=tu_usuario;Password=tu_contraseña"
+# --- CADENAS DE CONEXIÓN (.NET) ---
+# Usa 'localhost' si la API corre fuera de Docker (dotnet run).
+# Si la API corre dentro de docker-compose, usa el nombre del servicio ('db') como Host.
+ConnectionStrings__DefaultConnectionUsers="Host=localhost;Port=5433;Database=apitienda_db;Username=tu_usuario;Password=tu_contraseña"
+ConnectionStrings__DefaultConnectionProducts="Host=localhost;Port=5433;Database=apitienda_db;Username=tu_usuario;Password=tu_contraseña"
 ```
 
-> ⚠️ El `.env` contiene credenciales y está incluido en `.gitignore`. Nunca debe subirse al repositorio. Estas mismas variables (`DB_USER`, `DB_PASSWORD`, `DB_NAME`) son las que utiliza `docker-compose.yml` para inicializar el contenedor de PostgreSQL.
+> ⚠️ El `.env` contiene credenciales y está incluido en `.gitignore`. Nunca debe subirse al repositorio. `DB_USER`, `DB_PASSWORD`, `DB_NAME` y `DB_PORT` son las mismas variables que utiliza `docker-compose.yml` para inicializar y publicar el contenedor de PostgreSQL.
+
+La configuración de JWT (`Jwt:Key`, `Jwt:Issuer`, `Jwt:Audience`, `Jwt:AccessTokenMinutes`, `Jwt:RefreshTokenDays`) vive en `appsettings.json`. El valor de ejemplo de `Jwt:Key` sirve para desarrollo local; en cualquier entorno real conviene sobreescribirlo mediante variables de entorno o *user-secrets* en lugar de dejarlo en el archivo versionado.
+
+### CORS (orígenes permitidos)
+
+Los orígenes permitidos se leen de la sección `CorsOrigins` en `appsettings.Development.json`:
+
+```json
+"CorsOrigins": [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://192.168.1.50:3000"
+]
+```
+
+Si esa sección no está presente, `Program.cs` usa como valores por defecto `http://localhost:5173`, `http://localhost:3000` y `http://192.168.1.50:3000`. Agrega aquí cualquier origen adicional (por ejemplo, el dominio de tu frontend) antes de desplegar.
 
 ## Migraciones y base de datos
 
@@ -183,6 +250,8 @@ dotnet ef migrations add AddTokenBlacklist --context DataContext --output-dir Mi
 dotnet ef database update --context DataContext
 ```
 
+> La tabla `auditoria` (módulo de auditoría) todavía no tiene migración generada — ver [Auditoría](#auditoría).
+
 ## Ejecución
 
 ```bash
@@ -200,6 +269,8 @@ Al abrir esa URL en el navegador verás el endpoint raíz:
 ```
 Hola mundo! Nuestra primera API usando C#
 ```
+
+Alternativamente, puedes correr todo en contenedores con `docker compose up -d --build` (ver [Docker](#docker)); en ese caso la API queda disponible en `http://localhost:5001`.
 
 ## Documentación con Swagger
 
@@ -219,10 +290,44 @@ La API protege el módulo de **Productos** mediante autenticación con **JSON We
 2. En Swagger, botón **Authorize** → pegar el `access token` → todos los endpoints con candado quedan habilitados.
 3. Cuando el `access token` expira, `POST /auth/refresh` con el `refresh token` genera un nuevo par de tokens (y revoca el `refresh token` anterior guardándolo en la tabla `token_blacklist`).
 
+Los tiempos de expiración y la clave de firma se configuran en `appsettings.json` bajo la sección `Jwt` (ver [Configuración](#configuración)).
+
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/auth/login` | Inicia sesión y genera access + refresh token |
 | POST | `/auth/refresh` | Renueva los tokens a partir de un refresh token válido |
+
+## Logging
+
+El proyecto usa **Serilog** para logging estructurado, configurado en dos etapas:
+
+- Un *bootstrap logger* mínimo en consola, activo desde el arranque de `Program.cs` (útil para capturar errores de configuración antes de que la app termine de inicializar).
+- La configuración completa, leída desde la sección `Serilog` de `appsettings.json`, que:
+  - escribe en **consola** en formato JSON;
+  - escribe en **archivo**, con rotación diaria, en `logs/log-tecnico-.json`;
+  - enriquece cada entrada con el nombre de máquina y el hilo (`WithMachineName`, `WithThreadId`).
+- `app.UseSerilogRequestLogging()` registra automáticamente cada solicitud HTTP entrante.
+
+Si necesitas más o menos verbosidad, ajusta `Serilog:MinimumLevel` o los `WriteTo` en `appsettings.json`.
+
+## Auditoría
+
+> ⚠️ Módulo en desarrollo — la infraestructura ya existe pero **todavía no está conectada a ningún endpoint**.
+
+El proyecto incluye un módulo `logsauditoria/` pensado para registrar quién hizo qué, sobre qué tabla y desde qué IP:
+
+- **Modelo** `Auditoria` (tabla `auditoria`): `Usuario`, `Accion`, `Tabla`, `RegistroId`, `Detalle`, `Fecha`, `IpAddress`.
+- **`IAuditoriaService` / `AuditoriaService`**: expone `RegistrarLog(accion, tabla, registroId, detalle)`, que toma el usuario autenticado y la IP del request actual y guarda el registro en la base de datos.
+- El servicio ya está registrado en el contenedor de dependencias (`builder.Services.AddScoped<IAuditoriaService, AuditoriaService>()` en `Program.cs`).
+
+Lo que falta para que quede operativo:
+
+1. Generar la migración de la tabla `auditoria` (aún no existe):
+   ```bash
+   dotnet ef migrations add AddAuditoria --context DataContext --output-dir Migrations
+   dotnet ef database update --context DataContext
+   ```
+2. Inyectar `IAuditoriaService` en los Services de Usuarios/Productos (o en un middleware/filtro) y llamar a `RegistrarLog(...)` en las operaciones que se quieran auditar (crear, actualizar, eliminar, etc.).
 
 ## Endpoints
 
@@ -248,7 +353,7 @@ Base: `api/users`
 
 ### Productos
 
-Base: `api/products`
+Base: `api/products` — todos los endpoints requieren autenticación **Bearer** (ver [Autenticación (JWT)](#autenticación-jwt)).
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -264,3 +369,11 @@ Base: `api/products`
 | PATCH | `/products/{id}/update-image` | Actualiza la imagen del producto |
 | PATCH | `/products/{id}/deactivate` | Desactiva un producto |
 | PATCH | `/products/{id}/activate` | Activa un producto |
+
+## Pruebas
+
+El proyecto incluye `ApiTienda.Tests`, un proyecto de pruebas unitarias con **xUnit**, **Moq** y **EF Core InMemory**, que cubre la lógica de `UsuarioService` y `ProductService`.
+
+```bash
+dotnet test
+```
