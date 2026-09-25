@@ -213,8 +213,7 @@ DB_PORT=5433
 ConnectionStrings__DefaultConnectionUsers="Host=localhost;Port=5433;Database=apitienda_db;Username=tu_usuario;Password=tu_contraseña"
 ConnectionStrings__DefaultConnectionProducts="Host=localhost;Port=5433;Database=apitienda_db;Username=tu_usuario;Password=tu_contraseña"
 ```
-
-> ⚠️ El `.env` contiene credenciales y está incluido en `.gitignore`. Nunca debe subirse al repositorio. `DB_USER`, `DB_PASSWORD`, `DB_NAME` y `DB_PORT` son las mismas variables que utiliza `docker-compose.yml` para inicializar y publicar el contenedor de PostgreSQL.
+L.
 
 La configuración de JWT (`Jwt:Key`, `Jwt:Issuer`, `Jwt:Audience`, `Jwt:AccessTokenMinutes`, `Jwt:RefreshTokenDays`) vive en `appsettings.json`. El valor de ejemplo de `Jwt:Key` sirve para desarrollo local; en cualquier entorno real conviene sobreescribirlo mediante variables de entorno o *user-secrets* en lugar de dejarlo en el archivo versionado.
 
