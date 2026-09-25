@@ -311,7 +311,6 @@ Si necesitas más o menos verbosidad, ajusta `Serilog:MinimumLevel` o los `Write
 
 ## Auditoría
 
-> ⚠️ Módulo en desarrollo — la infraestructura ya existe pero **todavía no está conectada a ningún endpoint**.
 
 El proyecto incluye un módulo `logsauditoria/` pensado para registrar quién hizo qué, sobre qué tabla y desde qué IP:
 
